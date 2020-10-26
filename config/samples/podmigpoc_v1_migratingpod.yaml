@@ -1,0 +1,7 @@
+apiVersion: podmig.schrej.net/v1
+kind: MigratingPod
+metadata:
+  name: migratingpod-sample
+spec:
+  # Add fields here
+  foo: bar

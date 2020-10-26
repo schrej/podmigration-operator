@@ -1,0 +1,7 @@
+domain: schrej.net
+repo: github.com/schrej/podmigration-operator
+resources:
+- group: podmig
+  kind: MigratingPod
+  version: v1
+version: "2"

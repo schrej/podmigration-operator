@@ -1,0 +1,22 @@
+apiVersion: podmig.schrej.net/v1
+kind: MigratingPod
+metadata:
+  name: test
+  labels:
+    name: test
+spec:
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis
+        ports:
+          - containerPort: 6379
+            protocol: TCP
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
