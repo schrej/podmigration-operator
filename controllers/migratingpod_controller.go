@@ -53,12 +53,19 @@ func (r *MigratingPodReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 
 	var migratingPod podmigv1.MigratingPod
 	if err := r.Client.Get(ctx, req.NamespacedName, &migratingPod); err != nil {
-		log.Error(err, "unable to fetch MigratingPod")
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		if err := client.IgnoreNotFound(err); err != nil {
+			log.Error(err, "unable to fetch MigratingPod")
+			return ctrl.Result{}, err
+		}
+		log.Info("cleaning up orphan pods")
+		if err := r.cleanUpOrphanPods(ctx, req.Namespace, req.Name); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
-	var childPods corev1.PodList
-	if err := r.List(ctx, &childPods, client.InNamespace(req.Namespace), client.MatchingFields{podOwnerKey: req.Name}); err != nil {
+	childPods, err := r.getChildPods(ctx, req.Namespace, req.Name)
+	if err != nil {
 		log.Error(err, "unable to list child Pods")
 		return ctrl.Result{}, err
 	}
@@ -213,4 +220,36 @@ func (r *MigratingPodReconciler) applyPodAntiAffinity(pod *corev1.Pod, antiPod *
 		},
 		TopologyKey: "kubernetes.io/hostname",
 	})
+}
+
+func (r *MigratingPodReconciler) getChildPods(ctx context.Context, namespace, migPodName string) (*corev1.PodList, error) {
+	var childPods corev1.PodList
+	if err := r.List(ctx, &childPods, client.InNamespace(namespace), client.MatchingFields{podOwnerKey: migPodName}); err != nil {
+		return nil, err
+	}
+	return &childPods, nil
+}
+
+func (r *MigratingPodReconciler) cleanUpOrphanPods(ctx context.Context, namespace, migPodName string) error {
+	pods, err := r.getChildPods(ctx, namespace, migPodName)
+	if err != nil {
+		return err
+	}
+	for _, p := range pods.Items {
+		changed := false
+		for i, v := range p.Finalizers {
+			if v == migratingPodFinalizer {
+				p.Finalizers = RemoveString(p.Finalizers, i)
+				changed = true
+				break
+			}
+		}
+		if changed {
+			r.Log.Info("removing finalizer", "pod", p.Name)
+			if err := r.Update(ctx, &p); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
