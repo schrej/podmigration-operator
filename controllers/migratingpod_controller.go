@@ -57,17 +57,22 @@ func (r *MigratingPodReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 			log.Error(err, "unable to fetch MigratingPod")
 			return ctrl.Result{}, err
 		}
-		log.Info("cleaning up orphan pods")
-		if err := r.cleanUpOrphanPods(ctx, req.Namespace, req.Name); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{}, nil
 	}
 
 	childPods, err := r.getChildPods(ctx, req.Namespace, req.Name)
 	if err != nil {
 		log.Error(err, "unable to list child Pods")
 		return ctrl.Result{}, err
+	}
+
+	if migratingPod.Name == "" || migratingPod.DeletionTimestamp != nil {
+		log.Info("MigratingPod deleted, cleaning up orphan pods.")
+		err := r.cleanUpOrphanPods(ctx, childPods)
+		return ctrl.Result{}, err
+	}
+
+	for _, pod := range childPods.Items {
+		log.Info("found pod", "name", pod.Name, "owner", pod.ObjectMeta.OwnerReferences[0].Name)
 	}
 
 	// Now,
@@ -230,11 +235,7 @@ func (r *MigratingPodReconciler) getChildPods(ctx context.Context, namespace, mi
 	return &childPods, nil
 }
 
-func (r *MigratingPodReconciler) cleanUpOrphanPods(ctx context.Context, namespace, migPodName string) error {
-	pods, err := r.getChildPods(ctx, namespace, migPodName)
-	if err != nil {
-		return err
-	}
+func (r *MigratingPodReconciler) cleanUpOrphanPods(ctx context.Context, pods *corev1.PodList) error {
 	for _, p := range pods.Items {
 		changed := false
 		for i, v := range p.Finalizers {
