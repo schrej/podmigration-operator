@@ -45,9 +45,8 @@ type MigratingPodStatus struct {
 	ActivePod string `json:"activePod"`
 }
 
-// +kubebuilder:object:root=true
-
 // MigratingPod is the Schema for the migratingpods API
+// +kubebuilder:object:root=true
 type MigratingPod struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -56,9 +55,8 @@ type MigratingPod struct {
 	Status MigratingPodStatus `json:"status,omitempty"`
 }
 
-// +kubebuilder:object:root=true
-
 // MigratingPodList contains a list of MigratingPod
+// +kubebuilder:object:root=true
 type MigratingPodList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
