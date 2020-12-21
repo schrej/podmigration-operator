@@ -1,14 +1,15 @@
+---
 apiVersion: podmig.schrej.net/v1
 kind: MigratingPod
 metadata:
-  name: test
+  name: network
   labels:
-    name: test
+    scenario: network
 spec:
   template:
     metadata:
       labels:
-        app: redis
+        scenario: network
     spec:
       containers:
       - name: redis
@@ -20,3 +21,14 @@ spec:
           limits:
             memory: "128Mi"
             cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: network
+spec:
+  selector:
+    scenario: network
+  ports:
+  - port: 6379
+    targetPort: 6379

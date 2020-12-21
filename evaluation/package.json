@@ -1,0 +1,19 @@
+{
+  "name": "evaluation",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "canvas": "^2.6.1",
+    "vega": "^5.17.0",
+    "vega-cli": "^5.17.0",
+    "vega-embed": "^6.13.0",
+    "vega-lite": "^4.17.0"
+  }
+}

@@ -1,0 +1,16 @@
+---
+apiVersion: podmig.schrej.net/v1
+kind: MigratingPod
+metadata:
+  name: simple
+spec:
+  template:
+    metadata:
+      labels:
+        scenario: simple
+    spec:
+      containers:
+        - name: count
+          image: alpine
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/ash", "-c", "i=1; while true; do echo $i; i=$((i+1)); sleep 1; done"]

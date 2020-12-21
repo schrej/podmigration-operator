@@ -1,0 +1,18 @@
+---
+apiVersion: podmig.schrej.net/v1
+kind: MigratingPod
+metadata:
+  name: multiple
+spec:
+  template:
+    spec:
+      metadata:
+        labels:
+          scenario: multiple
+      containers:
+        - name: first
+          image: alpine
+          command: ["/bin/ash", "-c", "i=1; while true; do echo first $i; i=$((i+1)); sleep 1; done"]
+        - name: second
+          image: alpine
+          command: ["/bin/ash", "-c", "i=1; while true; do echo second $i; i=$((i+1)); sleep 1; done"]
