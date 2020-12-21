@@ -14,16 +14,13 @@ func GetPodFromTemplate(template *corev1.PodTemplateSpec, parentObject runtime.O
 	desiredLabels := getPodsLabelSet(template)
 	desiredFinalizers := getPodsFinalizers(template)
 	desiredAnnotations := getPodsAnnotationSet(template)
-	accessor, _ := meta.Accessor(parentObject)
-	prefix := getPodsPrefix(accessor.GetName())
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace:    namespace,
-			Labels:       desiredLabels,
-			Finalizers:   desiredFinalizers,
-			Annotations:  desiredAnnotations,
-			GenerateName: prefix,
+			Namespace:   namespace,
+			Labels:      desiredLabels,
+			Finalizers:  desiredFinalizers,
+			Annotations: desiredAnnotations,
 		},
 	}
 	pod.Spec = *template.Spec.DeepCopy()
@@ -52,13 +49,10 @@ func getPodsAnnotationSet(template *corev1.PodTemplateSpec) labels.Set {
 	return desiredAnnotations
 }
 
-func getPodsPrefix(controllerName string) string {
-	// use the dash (if the name isn't too long) to make the pod name a bit prettier
-	prefix := fmt.Sprintf("%s-", controllerName)
-	// if len(validation.ValidatePodName(prefix, true)) != 0 {
-	// 	prefix = controllerName
-	// }
-	return prefix
+func GetFirstPodName(parentObject runtime.Object) string {
+	accessor, _ := meta.Accessor(parentObject)
+	name := fmt.Sprintf("%s-0", accessor.GetName())
+	return name
 }
 
 // RemoveString removes the element at position i from a string array without preserving

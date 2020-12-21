@@ -19,6 +19,9 @@ package controllers
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -75,77 +78,86 @@ func (r *MigratingPodReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 		log.Info("found pod", "name", pod.Name, "owner", pod.ObjectMeta.OwnerReferences[0].Name)
 	}
 
-	// Now,
-	// how to figure out phase?
-	// when to create Pod?
-	// when to migrate?
-	// how to figure out "current" Pod?
-	// how to track which one is source, which is target?
-	// what to track in Status?
-
-	log.Info("", "child pods count", len(childPods.Items))
-
-	switch len(childPods.Items) {
-	case 0:
-		// create pod
-		pod := GetPodFromTemplate(&migratingPod.Spec.Template, &migratingPod, req.Namespace)
-		if err := ctrl.SetControllerReference(&migratingPod, pod, r.Scheme); err != nil {
-			return ctrl.Result{}, err
-		}
-
-		// r.applyExcludeNodeSelector(&migratingPod, pod)
-		pod.Finalizers = append(pod.Finalizers, migratingPodFinalizer)
-
-		if err := r.Create(ctx, pod); err != nil {
-			log.Error(err, "unable to create Pod for MigratingPod", "pod", pod)
-			return ctrl.Result{}, err
-		}
-
-		migratingPod.Status.ActivePod = pod.Name
+	source, target := r.getSourceTargetPods(migratingPod.Status, childPods)
+	if source != nil {
+		log = log.WithValues("source", source.Name)
+	}
+	if target != nil {
+		log = log.WithValues("target", target.Name)
+	}
+	// if there are pods, but we can't find a source pod, the state is somewhat invalid
+	// this can happen if a new migration is triggered before the old source Pod is fully deleted
+	if source == nil && len(childPods.Items) > 0 {
+		// todo: find a better strategy here
+		err := errors.New("invalid state")
+		log.Error(err, "couldn't determine source pod", "pod count", len(childPods.Items))
+		migratingPod.Status.State = podmigv1.StateInvalid
 		if err := r.Update(ctx, &migratingPod); err != nil {
-			log.Error(err, "failed to update status")
+			log.Error(err, "failed to update status of invalid pod")
 			return ctrl.Result{}, err
 		}
+		return ctrl.Result{}, err
+	}
 
-		log.V(1).Info("created Pod for MigratingPod run", "pod", pod)
-	case 1:
-		curPod := childPods.Items[0]
-		log.Info("Checking single pod")
-		log = log.WithValues("current pod", curPod.Name)
-		if !curPod.DeletionTimestamp.IsZero() {
-			// Pod is getting deleted, let's migrate it
-			newPod := GetPodFromTemplate(&migratingPod.Spec.Template, &migratingPod, req.Namespace)
-			if err := ctrl.SetControllerReference(&migratingPod, newPod, r.Scheme); err != nil {
-				return ctrl.Result{}, err
-			}
+	// update MigratingPod status
+	log.Info("updating status")
 
-			// r.applyExcludeNodeSelector(&migratingPod, newPod)
-			r.applyPodAntiAffinity(newPod, &curPod)
-			newPod.Finalizers = append(newPod.Finalizers, migratingPodFinalizer)
-			newPod.Spec.ClonePod = curPod.Name
-
-			if err := r.Create(ctx, newPod); err != nil {
-				log.Error(err, "unable to create Pod for MigratingPod", "pod", newPod)
-				return ctrl.Result{}, err
-			}
-		}
-	case 2:
-		source := &childPods.Items[0]
-		target := &childPods.Items[1]
-		if source.Name != migratingPod.Status.ActivePod {
-			tmp := source
-			source = target
-			target = tmp
-		}
-		log = log.WithValues("source pod", source.Name, "target pod", target.Name)
-
+	if target != nil {
 		if target.Status.Phase == corev1.PodRunning {
+			// once the target is running, it becomes the active Pod
 			migratingPod.Status.ActivePod = target.Name
+			migratingPod.Status.State = podmigv1.StateRunning
+		} else {
+			// if it's not running, we're migrating
+			migratingPod.Status.State = podmigv1.StateMigrating
+		}
+	} else if source != nil {
+		if !source.DeletionTimestamp.IsZero() {
+			migratingPod.Status.State = podmigv1.StateMigrationPending
+		} else if source.Status.Phase == corev1.PodRunning {
+			migratingPod.Status.ActivePod = source.Name
+			migratingPod.Status.State = podmigv1.StateRunning
+		}
+	}
+	if err := r.Update(ctx, &migratingPod); err != nil {
+		log.Error(err, "failed to update status")
+		return ctrl.Result{}, err
+	}
+
+	// synchronize MigratingPod
+	log.Info("synchronizing")
+
+	if source == nil {
+		// if no pod exists, create it
+		// this should always happen, the check is just a precaution
+		if len(childPods.Items) == 0 {
+			log.Info("creating initial pod")
+			pod := GetPodFromTemplate(&migratingPod.Spec.Template, &migratingPod, req.Namespace)
+			if err := ctrl.SetControllerReference(&migratingPod, pod, r.Scheme); err != nil {
+				return ctrl.Result{}, err
+			}
+			pod.Name = GetFirstPodName(&migratingPod)
+
+			// r.applyExcludeNodeSelector(&migratingPod, pod)
+			pod.Finalizers = append(pod.Finalizers, migratingPodFinalizer)
+
+			if err := r.Create(ctx, pod); err != nil {
+				log.Error(err, "unable to create Pod for MigratingPod", "pod", pod)
+				return ctrl.Result{}, err
+			}
+
 			if err := r.Update(ctx, &migratingPod); err != nil {
 				log.Error(err, "failed to update status")
 				return ctrl.Result{}, err
 			}
 
+			log.V(1).Info("created pod", "pod", pod.Name)
+			return ctrl.Result{}, nil
+		}
+	} else {
+		// if source pod is deleted and no longer the active pod, remove finalizer
+		if !source.DeletionTimestamp.IsZero() && migratingPod.Status.ActivePod != source.Name {
+			log.Info("removing finalizer of source pod")
 			for i, v := range source.Finalizers {
 				if v == migratingPodFinalizer {
 					source.Finalizers = RemoveString(source.Finalizers, i)
@@ -159,12 +171,27 @@ func (r *MigratingPodReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 			}
 		}
 
-	default:
-		// fail, as this cannot be? Or delete excess Pods? If yes, which?
-		// Or just ignore since prototype -> failure
-		err := errors.New("invalid state")
-		log.Error(err, "more than 2 Pods returned for MigratingPod", "pod count", len(childPods.Items), "pods", childPods.Items)
-		return ctrl.Result{}, err
+		// if source Pod is getting deleted, migrate it
+		if target == nil && !source.DeletionTimestamp.IsZero() {
+			log.Info("migrating pod due to soure pod deletion")
+			target := GetPodFromTemplate(&migratingPod.Spec.Template, &migratingPod, req.Namespace)
+			if err := ctrl.SetControllerReference(&migratingPod, target, r.Scheme); err != nil {
+				return ctrl.Result{}, err
+			}
+			target.Name = r.getNextPodName(source.Name)
+
+			// r.applyExcludeNodeSelector(&migratingPod, newPod)
+			r.applyPodAntiAffinity(target, source)
+			target.Finalizers = append(target.Finalizers, migratingPodFinalizer)
+			target.Spec.ClonePod = source.Name
+
+			if err := r.Create(ctx, target); err != nil {
+				log.Error(err, "unable to create Pod for MigratingPod", "pod", target.Name)
+				return ctrl.Result{}, err
+			}
+
+			return ctrl.Result{RequeueAfter: time.Second}, nil
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -253,4 +280,30 @@ func (r *MigratingPodReconciler) cleanUpOrphanPods(ctx context.Context, pods *co
 		}
 	}
 	return nil
+}
+
+// getSourceTargetPods returns the source and target Pod from a list of childPods based on their creation timestamp.
+// If the list only contains one Pod, it is returned as the source pod. If the list contains zero or more than two
+// Pods, nil is returned for source and target.
+func (r *MigratingPodReconciler) getSourceTargetPods(status podmigv1.MigratingPodStatus, childPods *corev1.PodList) (source, target *corev1.Pod) {
+	if len(childPods.Items) == 1 {
+		return &childPods.Items[0], nil
+	}
+	if len(childPods.Items) == 2 {
+		if childPods.Items[0].CreationTimestamp.Before(&childPods.Items[1].CreationTimestamp) {
+			return &childPods.Items[0], &childPods.Items[1]
+		} else {
+			return &childPods.Items[1], &childPods.Items[0]
+		}
+	}
+	return nil, nil
+}
+
+func (r *MigratingPodReconciler) getNextPodName(curName string) string {
+	i := strings.LastIndex(curName, "-")
+	n, err := strconv.Atoi(curName[i+1:])
+	if err != nil {
+		return curName[:i-1]
+	}
+	return curName[:i+1] + strconv.Itoa(n+1)
 }

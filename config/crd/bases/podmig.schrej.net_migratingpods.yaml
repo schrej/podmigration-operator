@@ -5862,16 +5862,11 @@ spec:
             activePod:
               description: ActivePod
               type: string
-            currentRevision:
-              description: CurrentRevision indicates the version of the MigratingPod
-                to generate the current Pod
-              type: string
             state:
               description: State indicates the state of the MigratingPod
               type: string
           required:
           - activePod
-          - currentRevision
           - state
           type: object
       type: object

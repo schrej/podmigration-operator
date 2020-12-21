@@ -21,6 +21,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	StateCreating         = "Creating"
+	StateRunning          = "Running"
+	StateMigrationPending = "MigrationPending"
+	StateMigrating        = "Migrating"
+	StateInvalid          = "Invalid"
+)
+
 // MigratingPodSpec defines the desired state of MigratingPod
 type MigratingPodSpec struct {
 	// Template describes the pods that will be created.
@@ -36,10 +44,8 @@ type MigratingPodSpec struct {
 // MigratingPodStatus defines the observed state of MigratingPod
 type MigratingPodStatus struct {
 	// State indicates the state of the MigratingPod
+	// +kubebuilder
 	State string `json:"state"`
-
-	// CurrentRevision indicates the version of the MigratingPod to generate the current Pod
-	CurrentRevision string `json:"currentRevision"`
 
 	// ActivePod
 	ActivePod string `json:"activePod"`
@@ -54,6 +60,9 @@ type MigratingPod struct {
 	Spec   MigratingPodSpec   `json:"spec,omitempty"`
 	Status MigratingPodStatus `json:"status,omitempty"`
 }
+
+// Hub marks this type as a conversion hub
+func (*MigratingPod) Hub() {}
 
 // MigratingPodList contains a list of MigratingPod
 // +kubebuilder:object:root=true
